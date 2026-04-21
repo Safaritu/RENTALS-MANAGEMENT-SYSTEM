@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saftech Rental Manager - Pro</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --bg: #f8fafc;
+            --text-main: #1e293b;
+        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); margin: 0; padding: 20px; color: var(--text-main); }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border-left: 5px solid var(--primary); }
+        
+        /* New: Grid with Status colors */
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; }
+        .unit-card { background: white; padding: 15px; border-radius: 8px; text-align: center; cursor: pointer; transition: 0.2s; border: 1px solid #e2e8f0; position: relative; }
+        .unit-card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+        .unit-card.billed { border-top: 4px solid var(--success); }
+        .unit-card.pending { border-top: 4px solid var(--warning); }
+
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 1000; }
+        .modal-content { background: white; padding: 30px; border-radius: 16px; width: 350px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+        
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1.5px solid #e2e8f0; border-radius: 8px; font-size: 1rem; }
+        button { width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; margin-top: 10px; }
+        button.secondary { background: #f1f5f9; color: var(--text-main); }
+        
+        /* New: Billing History Table */
+        .history-section { margin-top: 40px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.9rem; }
+        th { text-align: left; padding: 12px; border-bottom: 2px solid #f1f5f9; color: #64748b; }
+        td { padding: 12px; border-bottom: 1px solid #f1f5f9; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>
+            <h2 style="color: var(--primary); margin:0;">Saftech Rental Manager</h2>
+            <small id="server-status">Checking Connection...</small>
+        </div>
+        <button onclick="loadUnits()" style="width: auto; padding: 8px 15px;">Refresh Data</button>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card">
+            <small color="#64748b">Total Portfolio</small>
+            <div id="units-loaded" style="font-size: 1.8rem; font-weight: bold;">0</div>
+        </div>
+        <div class="stat-card" style="border-left-color: var(--success);">
+            <small color="#64748b">Water Rate (Standard)</small>
+            <div style="font-size: 1.8rem; font-weight: bold;">235/=</div>
+        </div>
+        <div class="stat-card" style="border-left-color: var(--warning);">
+            <small color="#64748b">Pending Readings</small>
+            <div id="pending-count" style="font-size: 1.8rem; font-weight: bold;">--</div>
+        </div>
+    </div>
+
+    <h3>Apartment Layout</h3>
+    <div id="units-grid" class="grid"></div>
+
+    <div class="history-section">
+        <h3>Recent Readings Log</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Unit</th>
+                    <th>Reading</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="history-body">
+                </tbody>
+        </table>
+    </div>
+
+    <div id="readingModal" class="modal">
+        <div class="modal-content">
+            <h3 id="modalTitle" style="margin-top:0;">Unit ID</h3>
+            <p style="font-size: 0.85rem; color: #64748b;">Enter the current meter value to generate the monthly bill.</p>
+            <input type="number" id="meterValue" placeholder="Current Reading (m³)">
+            <button onclick="submitReading()" id="saveBtn">Confirm & Save</button>
+            <button onclick="closeModal()" class="secondary">Cancel</button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/api'; 
+        let selectedUnit = null;
+
+        async function checkStatus() {
+            const statusEl = document.getElementById('server-status');
+            try {
+                const res = await fetch(`${API_URL}/units`);
+                if(res.ok) {
+                    statusEl.innerText = "● System Online";
+                    statusEl.style.color = "var(--success)";
+                }
+            } catch (e) {
+                statusEl.innerText = "● System Offline (Check Backend)";
+                statusEl.style.color = "var(--danger)";
+            }
+        }
+
+        async function loadUnits() {
+            const grid = document.getElementById('units-grid');
+            const loadedCount = document.getElementById('units-loaded');
+            try {
+                const response = await fetch(`${API_URL}/units`);
+                const units = await response.json();
+                
+                grid.innerHTML = '';
+                loadedCount.innerText = units.length;
+                document.getElementById('pending-count').innerText = units.length; // Placeholder logic
+
+                units.forEach(unit => {
+                    const card = document.createElement('div');
+                    // New: Logic to visually distinguish floors
+                    card.className = 'unit-card pending'; 
+                    card.innerHTML = `
+                        <div style="font-weight:bold; font-size:1.1rem; color:var(--primary);">${unit.id}</div>
+                        <div style="font-size:0.75rem; color:#64748b; margin-top:4px;">Floor ${unit.floor}</div>
+                    `;
+                    card.onclick = () => openModal(unit.id);
+                    grid.appendChild(card);
+                });
+            } catch (err) {
+                grid.innerHTML = '<p style="color:red;">Failed to load units. Is the server running?</p>';
+            }
+        }
+
+        function openModal(id) {
+            selectedUnit = id;
+            document.getElementById('modalTitle').innerText = `Unit ${id} Billing`;
+            document.getElementById('readingModal').style.display = 'flex';
+            document.getElementById('meterValue').focus();
+        }
+
+        function closeModal() {
+            document.getElementById('readingModal').style.display = 'none';
+            document.getElementById('meterValue').value = '';
+        }
+
+        async function submitReading() {
+            const reading = document.getElementById('meterValue').value;
+            const btn = document.getElementById('saveBtn');
+            
+            if(!reading || reading < 0) return alert("Please enter a valid meter reading.");
+
+            btn.disabled = true;
+            btn.innerText = "Processing...";
+
+            try {
+                const res = await fetch(`${API_URL}/readings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ unitId: selectedUnit, reading: parseInt(reading) })
+                });
+
+                if(res.ok) {
+                    addToHistory(selectedUnit, reading);
+                    alert(`Success: ${selectedUnit} updated.`);
+                    closeModal();
+                } else {
+                    alert("Database Error: Could not save reading.");
+                }
+            } catch (e) {
+                alert("Network Error: Could not reach the server.");
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Confirm & Save";
+            }
+        }
+
+        // New Feature: Local History Log (Simulated until you create a History API)
+        function addToHistory(unit, val) {
+            const tbody = document.getElementById('history-body');
+            const row = document.createElement('tr');
+            const date = new Date().toLocaleDateString();
+            row.innerHTML = `
+                <td><strong>${unit}</strong></td>
+                <td>${val} m³</td>
+                <td>${date}</td>
+                <td style="color:var(--success)">Saved</td>
+            `;
+            tbody.prepend(row);
+        }
+
+        checkStatus();
+        loadUnits();
+    </script>
+</body>
+</html>
